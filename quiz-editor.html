@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QuizRoom — квизы в реальном времени</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">Q</span> QuizRoom</div>
+  <div class="nav-actions" x-data x-show="Api.isLoggedIn()" x-cloak>
+    <a href="/organizer.html" class="btn btn-ghost btn-sm">Мои квизы</a>
+  </div>
+</header>
+
+<main>
+  <div class="container narrow" x-data="landingPage()" x-init="init()">
+
+    <!-- Быстрый вход в комнату по коду — доступен без регистрации -->
+    <section class="card" style="margin-bottom:28px;">
+      <span class="eyebrow">Я участник</span>
+      <h2 style="margin-bottom:14px;">Подключиться к квизу</h2>
+      <form @submit.prevent="joinRoom()">
+        <div class="field-row">
+          <div class="field">
+            <label>Код комнаты</label>
+            <input type="text" x-model="joinCode" inputmode="numeric" maxlength="6" placeholder="123456" style="font-family:var(--font-mono);letter-spacing:0.1em;" required>
+          </div>
+        </div>
+        <div class="field">
+          <label>Ваше имя</label>
+          <input type="text" x-model="joinNickname" maxlength="24" placeholder="Как вас видят другие" required>
+        </div>
+        <p class="error-box" x-show="joinError" x-text="joinError"></p>
+        <button class="btn btn-primary btn-block btn-lg" type="submit" :disabled="joining">
+          <span x-show="!joining">Войти в квиз →</span>
+          <span x-show="joining">Входим…</span>
+        </button>
+      </form>
+    </section>
+
+    <div class="row" style="align-items:center; margin: 28px 0; gap:16px;">
+      <div style="flex:1;height:1px;background:var(--line)"></div>
+      <span class="muted">или для организаторов</span>
+      <div style="flex:1;height:1px;background:var(--line)"></div>
+    </div>
+
+    <!-- Вход / регистрация организатора -->
+    <section class="card">
+      <div class="pill-tabs">
+        <button class="pill-tab" :class="mode==='login' && 'active'" @click="mode='login'">Вход</button>
+        <button class="pill-tab" :class="mode==='register' && 'active'" @click="mode='register'">Регистрация</button>
+      </div>
+
+      <template x-if="mode === 'login'">
+        <form @submit.prevent="login()">
+          <div class="field">
+            <label>Email</label>
+            <input type="email" x-model="loginEmail" required autocomplete="email">
+          </div>
+          <div class="field">
+            <label>Пароль</label>
+            <input type="password" x-model="loginPassword" required autocomplete="current-password">
+          </div>
+          <p class="error-box" x-show="authError" x-text="authError"></p>
+          <button class="btn btn-ghost btn-block" type="submit" :disabled="authBusy">
+            <span x-show="!authBusy">Войти</span>
+            <span x-show="authBusy">Входим…</span>
+          </button>
+        </form>
+      </template>
+
+      <template x-if="mode === 'register'">
+        <form @submit.prevent="register()">
+          <div class="field">
+            <label>Имя</label>
+            <input type="text" x-model="regName" required>
+          </div>
+          <div class="field">
+            <label>Email</label>
+            <input type="email" x-model="regEmail" required autocomplete="email">
+          </div>
+          <div class="field">
+            <label>Пароль</label>
+            <input type="password" x-model="regPassword" required minlength="6" autocomplete="new-password">
+            <p class="hint">Минимум 6 символов</p>
+          </div>
+          <p class="error-box" x-show="authError" x-text="authError"></p>
+          <button class="btn btn-ghost btn-block" type="submit" :disabled="authBusy">
+            <span x-show="!authBusy">Создать аккаунт</span>
+            <span x-show="authBusy">Создаём…</span>
+          </button>
+        </form>
+      </template>
+    </section>
+
+  </div>
+</main>
+
+<footer>QuizRoom — учебный прототип квиз-платформы с проведением в реальном времени</footer>
+
+<script src="/js/api.js"></script>
+<script>
+function landingPage() {
+  return {
+    mode: "login",
+    joinCode: "",
+    joinNickname: "",
+    joining: false,
+    joinError: "",
+    loginEmail: "", loginPassword: "",
+    regName: "", regEmail: "", regPassword: "",
+    authBusy: false, authError: "",
+
+    init() {
+      if (Api.isLoggedIn()) {
+        const next = qs("next");
+        if (next) window.location.href = next;
+      }
+      const prefillCode = qs("code");
+      if (prefillCode) this.joinCode = prefillCode;
+    },
+
+    async login() {
+      this.authBusy = true; this.authError = "";
+      try {
+        const data = await Api.post("/auth/login", { email: this.loginEmail, password: this.loginPassword });
+        Api.setSession(data.token, data.user);
+        window.location.href = qs("next") || "/organizer.html";
+      } catch (e) {
+        this.authError = e.message;
+      } finally {
+        this.authBusy = false;
+      }
+    },
+
+    async register() {
+      this.authBusy = true; this.authError = "";
+      try {
+        const data = await Api.post("/auth/register", { name: this.regName, email: this.regEmail, password: this.regPassword });
+        Api.setSession(data.token, data.user);
+        window.location.href = qs("next") || "/organizer.html";
+      } catch (e) {
+        this.authError = e.message;
+      } finally {
+        this.authBusy = false;
+      }
+    },
+
+    async joinRoom() {
+      this.joining = true; this.joinError = "";
+      try {
+        const code = this.joinCode.trim();
+        // Проверяем, что комната существует, ещё до перехода на экран игры.
+        window.location.href = `/play.html?code=${encodeURIComponent(code)}&nickname=${encodeURIComponent(this.joinNickname.trim())}`;
+      } catch (e) {
+        this.joinError = e.message;
+        this.joining = false;
+      }
+    },
+  };
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Редактор квиза — QuizRoom</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+<body x-data="editorPage()" x-init="init()" x-cloak>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">Q</span> QuizRoom</div>
+  <div class="nav-actions">
+    <a href="/organizer.html" class="btn btn-ghost btn-sm">← Мои квизы</a>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <template x-if="!quiz">
+      <p class="muted">Загрузка…</p>
+    </template>
+
+    <template x-if="quiz">
+      <div>
+        <!-- Настройки квиза -->
+        <div class="card" style="margin-bottom:28px;">
+          <span class="eyebrow" x-text="quiz.category"></span>
+          <div class="row-between" style="align-items:flex-start;">
+            <h1 x-text="quiz.title" style="margin-bottom:4px;"></h1>
+            <button class="btn btn-primary" @click="startRoom()" :disabled="quiz.questions.length === 0">Запустить квиз →</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="margin-top:6px;" @click="editingMeta = !editingMeta" x-text="editingMeta ? 'Скрыть настройки' : 'Настройки квиза'"></button>
+
+          <div x-show="editingMeta" x-transition style="margin-top:18px;">
+            <form @submit.prevent="saveMeta()">
+              <div class="field-row">
+                <div class="field">
+                  <label>Название</label>
+                  <input type="text" x-model="metaTitle" required>
+                </div>
+                <div class="field">
+                  <label>Категория</label>
+                  <input type="text" x-model="metaCategory">
+                </div>
+                <div class="field" style="max-width:160px;">
+                  <label>Время/вопрос по умолч., сек</label>
+                  <input type="number" x-model="metaTimeLimit" min="5" max="120">
+                </div>
+              </div>
+              <button class="btn btn-ghost btn-sm" type="submit">Сохранить настройки</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="row-between" style="margin-bottom:16px;">
+          <h2 style="margin:0;">Вопросы (<span x-text="quiz.questions.length"></span>)</h2>
+          <button class="btn btn-primary btn-sm" @click="openNewQuestion()">+ Добавить вопрос</button>
+        </div>
+
+        <template x-if="quiz.questions.length === 0 && !showQuestionForm">
+          <div class="empty-state card">
+            <h3>В квизе пока нет вопросов</h3>
+            <p>Добавьте первый вопрос, чтобы можно было запустить игру</p>
+          </div>
+        </template>
+
+        <!-- Список вопросов -->
+        <div class="stack">
+          <template x-for="(q, idx) in quiz.questions" :key="q.id">
+            <div class="card-flat">
+              <div class="row-between">
+                <div class="row">
+                  <span class="badge" x-text="'№' + (idx + 1)"></span>
+                  <span class="badge" x-text="q.type === 'IMAGE' ? 'С изображением' : 'Текст'"></span>
+                  <span class="badge" x-text="q.choiceType === 'MULTIPLE' ? 'Неск. ответов' : 'Один ответ'"></span>
+                  <span class="badge" x-text="q.timeLimit + ' сек'"></span>
+                </div>
+                <div class="row">
+                  <button class="btn btn-ghost btn-sm" @click="openEditQuestion(q)">Изменить</button>
+                  <button class="btn btn-danger btn-sm" @click="removeQuestion(q)">Удалить</button>
+                </div>
+              </div>
+              <p style="margin:12px 0 8px; color:var(--text); font-weight:600;" x-text="q.text"></p>
+              <div class="row" style="flex-wrap:wrap;">
+                <template x-for="opt in q.options" :key="opt.id">
+                  <span class="badge" :class="opt.isCorrect && 'badge-done'" x-text="(opt.isCorrect ? '✓ ' : '') + opt.text"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Форма вопроса (добавление или редактирование) -->
+        <div class="card" style="margin-top:20px;" x-show="showQuestionForm" x-transition x-ref="questionForm">
+          <h3 x-text="editingQuestionId ? 'Изменить вопрос' : 'Новый вопрос'"></h3>
+          <form @submit.prevent="saveQuestion()">
+            <div class="field-row">
+              <div class="field">
+                <label>Тип вопроса</label>
+                <select x-model="form.type">
+                  <option value="TEXT">Текстовый</option>
+                  <option value="IMAGE">С изображением</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Тип выбора ответа</label>
+                <select x-model="form.choiceType">
+                  <option value="SINGLE">Один правильный</option>
+                  <option value="MULTIPLE">Несколько правильных</option>
+                </select>
+              </div>
+              <div class="field" style="max-width:140px;">
+                <label>Время, сек</label>
+                <input type="number" x-model="form.timeLimit" min="5" max="120">
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Текст вопроса</label>
+              <textarea x-model="form.text" rows="2" required></textarea>
+            </div>
+
+            <div class="field" x-show="form.type === 'IMAGE'">
+              <label>URL изображения</label>
+              <input type="text" x-model="form.imageUrl" placeholder="https://…">
+              <p class="hint">Изображение показывается участникам вместе с вопросом</p>
+            </div>
+
+            <label>Варианты ответа</label>
+            <div class="stack" style="margin-bottom:10px;">
+              <template x-for="(opt, i) in form.options" :key="i">
+                <div class="row">
+                  <input
+                    :type="form.choiceType === 'MULTIPLE' ? 'checkbox' : 'radio'"
+                    :name="form.choiceType === 'MULTIPLE' ? 'opt-multi-' + i : 'opt-single'"
+                    :checked="opt.isCorrect"
+                    @change="setCorrect(i, $event.target.checked)"
+                    style="width:20px;height:20px;flex:none;">
+                  <input type="text" x-model="opt.text" :placeholder="'Вариант ' + (i + 1)" style="flex:1;" required>
+                  <button type="button" class="btn btn-ghost btn-sm" @click="removeOption(i)" x-show="form.options.length > 2">✕</button>
+                </div>
+              </template>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" @click="addOption()" x-show="form.options.length < 6">+ Вариант</button>
+
+            <p class="error-box" x-show="formError" x-text="formError" style="margin-top:16px;"></p>
+
+            <div class="row" style="margin-top:18px;">
+              <button class="btn btn-primary" type="submit" :disabled="savingQuestion">
+                <span x-show="!savingQuestion">Сохранить вопрос</span>
+                <span x-show="savingQuestion">Сохраняем…</span>
+              </button>
+              <button class="btn btn-ghost" type="button" @click="closeQuestionForm()">Отмена</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </template>
+
+    <p class="error-box" x-show="pageError" x-text="pageError" style="margin-top:20px;"></p>
+  </div>
+</main>
+
+<footer>QuizRoom — учебный прототип квиз-платформы с проведением в реальном времени</footer>
+
+<script src="/js/api.js"></script>
+<script>
+function editorPage() {
+  return {
+    quizId: null,
+    quiz: null,
+    pageError: "",
+
+    editingMeta: false,
+    metaTitle: "", metaCategory: "", metaTimeLimit: 20,
+
+    showQuestionForm: false,
+    editingQuestionId: null,
+    savingQuestion: false,
+    formError: "",
+    form: this_defaultForm(),
+
+    init() {
+      if (!requireAuthOrRedirect()) return;
+      this.quizId = qs("id");
+      if (!this.quizId) { window.location.href = "/organizer.html"; return; }
+      this.loadQuiz();
+    },
+
+    async loadQuiz() {
+      try {
+        const data = await Api.get("/quizzes/" + this.quizId);
+        this.quiz = data.quiz;
+        this.metaTitle = this.quiz.title;
+        this.metaCategory = this.quiz.category;
+        this.metaTimeLimit = this.quiz.timeLimitPerQuestion;
+      } catch (e) {
+        this.pageError = e.message;
+      }
+    },
+
+    async saveMeta() {
+      try {
+        const data = await Api.put("/quizzes/" + this.quizId, {
+          title: this.metaTitle, category: this.metaCategory, timeLimitPerQuestion: Number(this.metaTimeLimit),
+        });
+        this.quiz = { ...data.quiz, questions: this.quiz.questions };
+        this.editingMeta = false;
+      } catch (e) {
+        this.pageError = e.message;
+      }
+    },
+
+    openNewQuestion() {
+      this.editingQuestionId = null;
+      this.form = this_defaultForm();
+      this.form.timeLimit = this.quiz.timeLimitPerQuestion;
+      this.formError = "";
+      this.showQuestionForm = true;
+      this.$nextTick(() => this.$refs.questionForm.scrollIntoView({ behavior: "smooth", block: "start" }));
+    },
+
+    openEditQuestion(q) {
+      this.editingQuestionId = q.id;
+      this.form = {
+        type: q.type,
+        choiceType: q.choiceType,
+        text: q.text,
+        imageUrl: q.imageUrl || "",
+        timeLimit: q.timeLimit,
+        options: q.options.map((o) => ({ text: o.text, isCorrect: o.isCorrect })),
+      };
+      this.formError = "";
+      this.showQuestionForm = true;
+      this.$nextTick(() => this.$refs.questionForm.scrollIntoView({ behavior: "smooth", block: "start" }));
+    },
+
+    closeQuestionForm() {
+      this.showQuestionForm = false;
+      this.editingQuestionId = null;
+    },
+
+    addOption() {
+      this.form.options.push({ text: "", isCorrect: false });
+    },
+    removeOption(i) {
+      this.form.options.splice(i, 1);
+    },
+    setCorrect(i, checked) {
+      if (this.form.choiceType === "MULTIPLE") {
+        this.form.options[i].isCorrect = checked;
+      } else {
+        this.form.options.forEach((o, j) => (o.isCorrect = j === i));
+      }
+    },
+
+    async saveQuestion() {
+      this.formError = "";
+      const validOptions = this.form.options.filter((o) => o.text.trim());
+      if (validOptions.length < 2) { this.formError = "Нужно минимум 2 варианта ответа"; return; }
+      if (!validOptions.some((o) => o.isCorrect)) { this.formError = "Отметьте хотя бы один правильный вариант"; return; }
+
+      this.savingQuestion = true;
+      try {
+        const payload = { ...this.form, options: validOptions, timeLimit: Number(this.form.timeLimit) };
+        const data = this.editingQuestionId
+          ? await Api.put(`/quizzes/${this.quizId}/questions/${this.editingQuestionId}`, payload)
+          : await Api.post(`/quizzes/${this.quizId}/questions`, payload);
+        this.quiz = data.quiz;
+        this.closeQuestionForm();
+      } catch (e) {
+        this.formError = e.message;
+      } finally {
+        this.savingQuestion = false;
+      }
+    },
+
+    async removeQuestion(q) {
+      if (!confirm("Удалить этот вопрос?")) return;
+      try {
+        const data = await Api.del(`/quizzes/${this.quizId}/questions/${q.id}`);
+        this.quiz = data.quiz;
+      } catch (e) {
+        this.pageError = e.message;
+      }
+    },
+
+    async startRoom() {
+      try {
+        const data = await Api.post("/rooms", { quizId: this.quizId });
+        window.location.href = "/host.html?code=" + data.room.code;
+      } catch (e) {
+        this.pageError = e.message;
+      }
+    },
+  };
+}
+
+function this_defaultForm() {
+  return {
+    type: "TEXT",
+    choiceType: "SINGLE",
+    text: "",
+    imageUrl: "",
+    timeLimit: 20,
+    options: [{ text: "", isCorrect: true }, { text: "", isCorrect: false }],
+  };
+}
+</script>
+</body>
+</html>

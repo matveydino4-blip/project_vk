@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Панель ведущего — QuizRoom</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body x-data="hostPage()" x-init="init()" x-cloak>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">Q</span> QuizRoom</div>
+  <div class="nav-actions">
+    <span class="badge" :class="connected ? 'badge-done' : 'badge-live'">
+      <span class="badge-dot"></span>
+      <span x-text="connected ? 'Подключено' : 'Соединение…'"></span>
+    </span>
+    <a href="/organizer.html" class="btn btn-ghost btn-sm">Выйти из панели</a>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+
+    <p class="error-box" x-show="fatalError" x-text="fatalError"></p>
+
+    <!-- ЛОББИ -->
+    <template x-if="phase === 'lobby'">
+      <div>
+        <div class="card center" style="margin-bottom:28px;">
+          <span class="eyebrow" x-text="quizTitle"></span>
+          <p class="muted" style="margin-bottom:6px;">Код для подключения участников</p>
+          <div class="room-code" x-text="code"></div>
+          <p class="muted" style="margin-top:10px;">Участники открывают QuizRoom и вводят этот код</p>
+        </div>
+
+        <div class="row-between" style="margin-bottom:14px;">
+          <h2 style="margin:0;">Участники (<span x-text="participants.length"></span>)</h2>
+          <button class="btn btn-primary btn-lg" @click="startQuiz()" :disabled="participants.length === 0">Начать квиз →</button>
+        </div>
+
+        <template x-if="participants.length === 0">
+          <div class="empty-state card"><h3>Ожидаем участников…</h3><p>Как только кто-то подключится по коду, он появится здесь</p></div>
+        </template>
+
+        <div class="grid grid-3">
+          <template x-for="p in participants" :key="p.nickname">
+            <div class="card-flat center" style="font-weight:600;" x-text="p.nickname"></div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- ИДЁТ ВОПРОС -->
+    <template x-if="phase === 'question'">
+      <div>
+        <div class="row-between" style="margin-bottom:18px;">
+          <span class="badge badge-live"><span class="badge-dot"></span>Вопрос <span x-text="question.index + 1"></span> из <span x-text="question.total"></span></span>
+          <div class="timer-ring-wrap">
+            <svg width="74" height="74">
+              <circle class="timer-ring-bg" cx="37" cy="37" r="30"></circle>
+              <circle class="timer-ring-fg" cx="37" cy="37" r="30"
+                :stroke-dasharray="2*Math.PI*30"
+                :stroke-dashoffset="2*Math.PI*30*(1 - timeLeft/question.timeLimit)"></circle>
+            </svg>
+            <div class="timer-num" x-text="timeLeft"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:18px;">
+          <h2 x-text="question.text"></h2>
+          <img :src="question.imageUrl" x-show="question.imageUrl" style="max-width:100%;border-radius:var(--radius-md);margin:12px 0;">
+          <div class="grid grid-2" style="margin-top:14px;">
+            <template x-for="(opt, i) in question.options" :key="opt.id">
+              <div class="buzzer" style="cursor:default;">
+                <span class="buzzer-letter" x-text="String.fromCharCode(65+i)"></span>
+                <span x-text="opt.text"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="row-between">
+          <p class="muted">Ответили: <b x-text="progress.answeredCount"></b> из <b x-text="progress.participantCount"></b></p>
+          <button class="btn btn-gold" @click="reveal()">Показать ответ сейчас →</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ВОПРОС ЗАКРЫТ -->
+    <template x-if="phase === 'closed'">
+      <div>
+        <div class="card" style="margin-bottom:18px;">
+          <span class="eyebrow">Правильный ответ</span>
+          <div class="grid grid-2">
+            <template x-for="(opt, i) in closedData.options" :key="opt.id">
+              <div class="buzzer" :class="opt.isCorrect ? 'is-correct' : 'is-wrong'" style="cursor:default;">
+                <span class="buzzer-letter" x-text="String.fromCharCode(65+i)"></span>
+                <span x-text="opt.text"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <h2>Лидерборд</h2>
+        <div class="stack" style="margin-bottom:24px;">
+          <template x-for="(row, i) in closedData.leaderboard" :key="row.nickname">
+            <div class="lb-row">
+              <span class="lb-rank" x-text="i+1"></span>
+              <span class="lb-name" x-text="row.nickname"></span>
+              <span class="lb-score" x-text="row.score"></span>
+            </div>
+          </template>
+        </div>
+
+        <button class="btn btn-primary btn-lg" @click="nextOrEnd()">
+          <span x-text="closedData.isLastQuestion ? 'Завершить квиз →' : 'Следующий вопрос →'"></span>
+        </button>
+      </div>
+    </template>
+
+    <!-- ФИНАЛ -->
+    <template x-if="phase === 'ended'">
+      <div class="center">
+        <span class="eyebrow">Квиз завершён</span>
+        <h1>Итоговый лидерборд</h1>
+        <div class="stack narrow" style="margin: 24px auto; text-align:left;">
+          <template x-for="(row, i) in finalLeaderboard" :key="row.nickname">
+            <div class="lb-row">
+              <span class="lb-rank" x-text="i+1"></span>
+              <span class="lb-name" x-text="row.nickname"></span>
+              <span class="lb-score" x-text="row.score"></span>
+            </div>
+          </template>
+        </div>
+        <a href="/organizer.html" class="btn btn-primary btn-lg">К моим квизам</a>
+      </div>
+    </template>
+
+  </div>
+</main>
+
+<footer>QuizRoom — учебный прототип квиз-платформы с проведением в реальном времени</footer>
+
+<script src="/js/api.js"></script>
+<script>
+function hostPage() {
+  return {
+    code: null,
+    socket: null,
+    connected: false,
+    fatalError: "",
+    quizTitle: "",
+    participants: [],
+
+    phase: "lobby", // lobby | question | closed | ended
+    question: null,
+    timeLeft: 0,
+    timerHandle: null,
+    progress: { answeredCount: 0, participantCount: 0 },
+    closedData: null,
+    finalLeaderboard: [],
+
+    init() {
+      if (!requireAuthOrRedirect()) return;
+      this.code = qs("code");
+      if (!this.code) { this.fatalError = "Не указан код комнаты"; return; }
+
+      this.socket = io({ transports: ["websocket"] });
+      this.socket.on("connect", () => {
+        this.connected = true;
+        this.socket.emit("host:join", { code: this.code, token: Api.getToken() }, (res) => {
+          if (!res.ok) { this.fatalError = res.error; return; }
+          this.quizTitle = res.room.quiz.title;
+          this.participants = res.room.participants;
+          if (res.room.status === "FINISHED") this.phase = "ended";
+        });
+      });
+      this.socket.on("disconnect", () => { this.connected = false; });
+
+      this.socket.on("room:update", (room) => { this.participants = room.participants; });
+
+      this.socket.on("question:show", (q) => {
+        this.question = q;
+        this.phase = "question";
+        this.progress = { answeredCount: 0, participantCount: this.participants.length };
+        this.startTimer(q.timeLimit);
+      });
+
+      this.socket.on("question:progress", (p) => { this.progress = p; });
+
+      this.socket.on("question:closed", (data) => {
+        this.stopTimer();
+        this.closedData = data;
+        this.phase = "closed";
+      });
+
+      this.socket.on("quiz:ended", (data) => {
+        this.stopTimer();
+        this.finalLeaderboard = data.leaderboard;
+        this.phase = "ended";
+      });
+    },
+
+    startTimer(seconds) {
+      this.timeLeft = seconds;
+      this.stopTimer();
+      this.timerHandle = setInterval(() => {
+        if (this.timeLeft > 0) this.timeLeft -= 1;
+      }, 1000);
+    },
+    stopTimer() {
+      if (this.timerHandle) clearInterval(this.timerHandle);
+      this.timerHandle = null;
+    },
+
+    startQuiz() {
+      this.socket.emit("host:start", { code: this.code }, (res) => {
+        if (!res.ok) this.fatalError = res.error;
+      });
+    },
+    reveal() {
+      this.socket.emit("host:reveal", { code: this.code }, (res) => {
+        if (!res.ok) this.fatalError = res.error;
+      });
+    },
+    nextOrEnd() {
+      if (this.closedData.isLastQuestion) {
+        this.socket.emit("host:end", { code: this.code }, (res) => { if (!res.ok) this.fatalError = res.error; });
+      } else {
+        this.socket.emit("host:next", { code: this.code }, (res) => { if (!res.ok) this.fatalError = res.error; });
+      }
+    },
+  };
+}
+</script>
+</body>
+</html>

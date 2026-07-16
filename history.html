@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Играем — QuizRoom</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body x-data="playPage()" x-init="init()" x-cloak>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">Q</span> QuizRoom</div>
+  <span class="badge" :class="connected ? 'badge-done' : 'badge-live'">
+    <span class="badge-dot"></span>
+    <span x-text="connected ? 'Подключено' : 'Соединение…'"></span>
+  </span>
+</header>
+
+<main>
+  <div class="container narrow">
+
+    <p class="error-box" x-show="fatalError" x-text="fatalError"></p>
+
+    <!-- Форма входа, если ник не передан заранее -->
+    <template x-if="phase === 'join'">
+      <div class="card">
+        <span class="eyebrow">Код комнаты: <span x-text="code"></span></span>
+        <h2>Как вас представить?</h2>
+        <form @submit.prevent="joinRoom()">
+          <div class="field">
+            <input type="text" x-model="nickname" maxlength="24" placeholder="Ваше имя" required autofocus>
+          </div>
+          <p class="error-box" x-show="joinError" x-text="joinError"></p>
+          <button class="btn btn-primary btn-block btn-lg" type="submit" :disabled="joining">Войти →</button>
+        </form>
+      </div>
+    </template>
+
+    <!-- ЛОББИ -->
+    <template x-if="phase === 'lobby'">
+      <div class="card center">
+        <span class="eyebrow" x-text="quizTitle"></span>
+        <h2>Вы в игре, <span x-text="nickname"></span>!</h2>
+        <p class="muted">Ждём, пока ведущий запустит квиз…</p>
+        <div class="room-code-sm" style="margin-top:14px;" x-text="'Код: ' + code"></div>
+      </div>
+    </template>
+
+    <!-- ВОПРОС -->
+    <template x-if="phase === 'question'">
+      <div>
+        <div class="row-between" style="margin-bottom:14px;">
+          <span class="badge badge-live"><span class="badge-dot"></span>Вопрос <span x-text="question.index+1"></span>/<span x-text="question.total"></span></span>
+          <div class="timer-ring-wrap" style="width:56px;height:56px;">
+            <svg width="56" height="56">
+              <circle class="timer-ring-bg" cx="28" cy="28" r="22"></circle>
+              <circle class="timer-ring-fg" cx="28" cy="28" r="22"
+                :stroke-dasharray="2*Math.PI*22"
+                :stroke-dashoffset="2*Math.PI*22*(1 - timeLeft/question.timeLimit)"></circle>
+            </svg>
+            <div class="timer-num" style="font-size:14px;" x-text="timeLeft"></div>
+          </div>
+        </div>
+
+        <h2 x-text="question.text" style="margin-bottom:14px;"></h2>
+        <img :src="question.imageUrl" x-show="question.imageUrl" style="max-width:100%;border-radius:var(--radius-md);margin-bottom:14px;">
+
+        <template x-if="question.choiceType === 'MULTIPLE' && !hasAnswered">
+          <p class="hint" style="margin-bottom:10px;">Можно выбрать несколько вариантов</p>
+        </template>
+
+        <div class="stack">
+          <template x-for="(opt, i) in question.options" :key="opt.id">
+            <button
+              type="button"
+              class="buzzer"
+              :class="selected.includes(opt.id) && 'is-selected'"
+              :disabled="hasAnswered"
+              @click="toggleOption(opt.id)">
+              <span class="buzzer-letter" x-text="String.fromCharCode(65+i)"></span>
+              <span x-text="opt.text"></span>
+            </button>
+          </template>
+        </div>
+
+        <button
+          class="btn btn-primary btn-block btn-lg"
+          style="margin-top:18px;"
+          x-show="question.choiceType === 'MULTIPLE' && !hasAnswered"
+          @click="submitAnswer()"
+          :disabled="selected.length === 0">
+          Ответить →
+        </button>
+
+        <p class="muted center" style="margin-top:18px;" x-show="hasAnswered">Ответ отправлен — ждём остальных…</p>
+      </div>
+    </template>
+
+    <!-- РЕЗУЛЬТАТ ВОПРОСА -->
+    <template x-if="phase === 'closed'">
+      <div>
+        <div class="card center" style="margin-bottom:20px;" :class="lastResult?.isCorrect ? '' : ''">
+          <template x-if="lastResult">
+            <div>
+              <h2 x-text="lastResult.isCorrect ? '✓ Правильно!' : '✕ Неверно'" :style="'color:' + (lastResult.isCorrect ? 'var(--mint)' : 'var(--coral)')"></h2>
+              <p class="muted" x-show="lastResult.isCorrect" x-text="'+' + lastResult.points + ' очков'"></p>
+            </div>
+          </template>
+          <template x-if="!lastResult">
+            <h2 style="color:var(--text-dim);">Время вышло</h2>
+          </template>
+        </div>
+
+        <h3>Лидерборд</h3>
+        <div class="stack">
+          <template x-for="(row, i) in closedData.leaderboard" :key="row.nickname">
+            <div class="lb-row" :style="row.nickname === nickname && 'border-color:var(--gold)'">
+              <span class="lb-rank" x-text="i+1"></span>
+              <span class="lb-name" x-text="row.nickname"></span>
+              <span class="lb-score" x-text="row.score"></span>
+            </div>
+          </template>
+        </div>
+        <p class="muted center" style="margin-top:18px;">Ждём следующий вопрос от ведущего…</p>
+      </div>
+    </template>
+
+    <!-- ФИНАЛ -->
+    <template x-if="phase === 'ended'">
+      <div class="center">
+        <span class="eyebrow">Квиз завершён</span>
+        <h1>Итоги</h1>
+        <div class="stack" style="margin: 20px 0; text-align:left;">
+          <template x-for="(row, i) in finalLeaderboard" :key="row.nickname">
+            <div class="lb-row" :style="row.nickname === nickname && 'border-color:var(--gold)'">
+              <span class="lb-rank" x-text="i+1"></span>
+              <span class="lb-name" x-text="row.nickname"></span>
+              <span class="lb-score" x-text="row.score"></span>
+            </div>
+          </template>
+        </div>
+        <a href="/index.html" class="btn btn-primary btn-lg">Готово</a>
+      </div>
+    </template>
+
+  </div>
+</main>
+
+<footer>QuizRoom — учебный прототип квиз-платформы с проведением в реальном времени</footer>
+
+<script src="/js/api.js"></script>
+<script>
+function playPage() {
+  return {
+    code: null,
+    nickname: "",
+    socket: null,
+    connected: false,
+    fatalError: "", joinError: "", joining: false,
+    quizTitle: "",
+
+    phase: "join", // join | lobby | question | closed | ended
+    question: null,
+    selected: [],
+    hasAnswered: false,
+    timeLeft: 0,
+    timerHandle: null,
+    lastResult: null,
+    closedData: null,
+    finalLeaderboard: [],
+
+    init() {
+      this.code = qs("code");
+      const prefillNickname = qs("nickname");
+      if (!this.code) { this.fatalError = "Не указан код комнаты"; return; }
+
+      this.socket = io({ transports: ["websocket"] });
+      this.socket.on("connect", () => { this.connected = true; });
+      this.socket.on("disconnect", () => { this.connected = false; });
+
+      this.socket.on("question:show", (q) => {
+        this.question = q;
+        this.selected = [];
+        this.hasAnswered = false;
+        this.lastResult = null;
+        this.phase = "question";
+        this.startTimer(q.timeLimit);
+      });
+
+      this.socket.on("question:closed", (data) => {
+        this.stopTimer();
+        this.closedData = data;
+        this.phase = "closed";
+      });
+
+      this.socket.on("quiz:ended", (data) => {
+        this.stopTimer();
+        this.finalLeaderboard = data.leaderboard;
+        this.phase = "ended";
+      });
+
+      if (prefillNickname) {
+        this.nickname = prefillNickname;
+        this.joinRoom();
+      } else {
+        this.phase = "join";
+      }
+    },
+
+    joinRoom() {
+      this.joining = true; this.joinError = "";
+      const attempt = () => {
+        this.socket.emit("participant:join", { code: this.code, nickname: this.nickname.trim(), token: Api.getToken() }, (res) => {
+          this.joining = false;
+          if (!res.ok) { this.joinError = res.error; this.phase = "join"; return; }
+          this.quizTitle = res.room.quiz.title;
+          this.phase = res.room.status === "RUNNING" ? "question" : "lobby";
+        });
+      };
+      if (this.socket.connected) attempt();
+      else this.socket.once("connect", attempt);
+    },
+
+    toggleOption(id) {
+      if (this.hasAnswered) return;
+      if (this.question.choiceType === "SINGLE") {
+        this.selected = [id];
+        this.submitAnswer();
+      } else {
+        const i = this.selected.indexOf(id);
+        if (i === -1) this.selected.push(id);
+        else this.selected.splice(i, 1);
+      }
+    },
+
+    submitAnswer() {
+      if (this.hasAnswered || this.selected.length === 0) return;
+      this.hasAnswered = true;
+      this.socket.emit(
+        "participant:answer",
+        { code: this.code, questionId: this.question.id, selectedOptionIds: this.selected },
+        (res) => {
+          if (res.ok) this.lastResult = res;
+        }
+      );
+    },
+
+    startTimer(seconds) {
+      this.timeLeft = seconds;
+      this.stopTimer();
+      this.timerHandle = setInterval(() => {
+        if (this.timeLeft > 0) this.timeLeft -= 1;
+      }, 1000);
+    },
+    stopTimer() {
+      if (this.timerHandle) clearInterval(this.timerHandle);
+      this.timerHandle = null;
+    },
+  };
+}
+</script>
+</body>
+</html>
