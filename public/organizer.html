@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Мои квизы — QuizRoom</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+<body x-data="organizerPage()" x-init="init()" x-cloak>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">Q</span> QuizRoom</div>
+  <div class="nav-actions">
+    <a href="/history.html" class="btn btn-ghost btn-sm">История</a>
+    <span class="user-chip" x-text="user?.name"></span>
+    <button class="btn btn-ghost btn-sm" @click="logout()">Выйти</button>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <div class="row-between" style="margin-bottom: 28px;">
+      <div>
+        <span class="eyebrow">Кабинет организатора</span>
+        <h1>Мои квизы</h1>
+      </div>
+      <button class="btn btn-primary" @click="showCreate = true">+ Новый квиз</button>
+    </div>
+
+    <!-- Форма создания квиза -->
+    <div class="card" style="margin-bottom:28px;" x-show="showCreate" x-transition>
+      <h3>Новый квиз</h3>
+      <form @submit.prevent="createQuiz()">
+        <div class="field-row">
+          <div class="field">
+            <label>Название</label>
+            <input type="text" x-model="newTitle" placeholder="Например, «Разминка по JavaScript»" required>
+          </div>
+          <div class="field">
+            <label>Категория</label>
+            <input type="text" x-model="newCategory" placeholder="Общее">
+          </div>
+          <div class="field" style="max-width:160px;">
+            <label>Время/вопрос, сек</label>
+            <input type="number" x-model="newTimeLimit" min="5" max="120">
+          </div>
+        </div>
+        <p class="error-box" x-show="createError" x-text="createError"></p>
+        <div class="row">
+          <button class="btn btn-primary" type="submit" :disabled="creating">Создать</button>
+          <button class="btn btn-ghost" type="button" @click="showCreate = false">Отмена</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Список квизов -->
+    <template x-if="loaded && quizzes.length === 0">
+      <div class="empty-state card">
+        <h3>Пока нет ни одного квиза</h3>
+        <p>Создайте первый квиз, чтобы начать</p>
+      </div>
+    </template>
+
+    <div class="grid grid-2">
+      <template x-for="quiz in quizzes" :key="quiz.id">
+        <div class="card">
+          <div class="row-between" style="margin-bottom:10px;">
+            <span class="badge" x-text="quiz.category"></span>
+            <span class="muted" x-text="quiz.questionCount + ' ' + wordQuestions(quiz.questionCount)"></span>
+          </div>
+          <h3 x-text="quiz.title"></h3>
+          <p class="muted" x-text="'Обновлён: ' + fmtDate(quiz.updatedAt)"></p>
+          <div class="row" style="margin-top:16px;">
+            <a :href="'/quiz-editor.html?id=' + quiz.id" class="btn btn-ghost btn-sm">Редактировать</a>
+            <button class="btn btn-primary btn-sm" @click="startRoom(quiz)" :disabled="quiz.questionCount === 0">Запустить</button>
+            <button class="btn btn-danger btn-sm" @click="removeQuiz(quiz)">Удалить</button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <p class="error-box" x-show="listError" x-text="listError" style="margin-top:20px;"></p>
+  </div>
+</main>
+
+<footer>QuizRoom — учебный прототип квиз-платформы с проведением в реальном времени</footer>
+
+<script src="/js/api.js"></script>
+<script>
+function organizerPage() {
+  return {
+    user: null,
+    quizzes: [],
+    loaded: false,
+    listError: "",
+    showCreate: false,
+    newTitle: "", newCategory: "Общее", newTimeLimit: 20,
+    creating: false, createError: "",
+
+    init() {
+      if (!requireAuthOrRedirect()) return;
+      this.user = Api.getUser();
+      this.loadQuizzes();
+    },
+
+    async loadQuizzes() {
+      try {
+        const data = await Api.get("/quizzes");
+        this.quizzes = data.quizzes;
+      } catch (e) {
+        this.listError = e.message;
+      } finally {
+        this.loaded = true;
+      }
+    },
+
+    async createQuiz() {
+      this.creating = true; this.createError = "";
+      try {
+        const data = await Api.post("/quizzes", {
+          title: this.newTitle, category: this.newCategory, timeLimitPerQuestion: Number(this.newTimeLimit),
+        });
+        window.location.href = "/quiz-editor.html?id=" + data.quiz.id;
+      } catch (e) {
+        this.createError = e.message;
+      } finally {
+        this.creating = false;
+      }
+    },
+
+    async startRoom(quiz) {
+      try {
+        const data = await Api.post("/rooms", { quizId: quiz.id });
+        window.location.href = "/host.html?code=" + data.room.code;
+      } catch (e) {
+        this.listError = e.message;
+      }
+    },
+
+    async removeQuiz(quiz) {
+      if (!confirm(`Удалить квиз «${quiz.title}»? Это действие необратимо.`)) return;
+      try {
+        await Api.del("/quizzes/" + quiz.id);
+        this.quizzes = this.quizzes.filter((q) => q.id !== quiz.id);
+      } catch (e) {
+        this.listError = e.message;
+      }
+    },
+
+    wordQuestions(n) {
+      const mod10 = n % 10, mod100 = n % 100;
+      if (mod10 === 1 && mod100 !== 11) return "вопрос";
+      if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return "вопроса";
+      return "вопросов";
+    },
+
+    fmtDate,
+
+    logout() {
+      Api.clearSession();
+      window.location.href = "/index.html";
+    },
+  };
+}
+</script>
+</body>
+</html>

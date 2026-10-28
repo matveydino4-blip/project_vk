@@ -6,6 +6,13 @@ const { verifySocketToken } = require("../auth");
 // Таймеры автозакрытия вопроса по комнатам: code -> Timeout
 const questionTimers = new Map();
 
+// Комнаты, в которых текущий вопрос уже закрыт (показан правильный ответ),
+// но ведущий ещё не перешёл к следующему. Ответы в этот момент не принимаются.
+const closedQuestions = new Set();
+
+// Небольшой запас на сетевую задержку при проверке, успел ли участник ответить.
+const ANSWER_GRACE_MS = 500;
+
 function roomChannel(code) {
   return `room:${code}`;
 }
@@ -102,7 +109,7 @@ module.exports = function registerRoomHandlers(io) {
       if (questions.length === 0) return ack?.({ ok: false, error: "В квизе нет вопросов" });
 
       db.prepare(
-        "UPDATE Room SET status = 'RUNNING', currentQuestionIndex = 0, currentQuestionStartAt = datetime('now') WHERE id = ?"
+        "UPDATE Room SET status = 'RUNNING', currentQuestionIndex = 0, currentQuestionStartAt = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?"
       ).run(room.id);
 
       broadcastQuestion(io, code);
@@ -142,7 +149,7 @@ module.exports = function registerRoomHandlers(io) {
 
       const questions = getQuestions(room.quizId);
       const question = questions[room.currentQuestionIndex];
-      if (!question || question.id !== questionId) {
+      if (!question || question.id !== questionId || closedQuestions.has(code)) {
         return ack?.({ ok: false, error: "Этот вопрос уже закрыт" });
       }
 
@@ -161,6 +168,9 @@ module.exports = function registerRoomHandlers(io) {
 
       const startedAt = new Date(room.currentQuestionStartAt + "Z").getTime();
       const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs > question.timeLimit * 1000 + ANSWER_GRACE_MS) {
+        return ack?.({ ok: false, error: "Время на ответ истекло" });
+      }
       const points = calculatePoints({
         isCorrect,
         timeLimitMs: question.timeLimit * 1000,
@@ -229,6 +239,7 @@ function broadcastQuestion(io, code) {
     startedAt: room.currentQuestionStartAt,
     options: getOptions(question.id), // без isCorrect — участники не должны видеть ответ заранее
   };
+  closedQuestions.delete(code);
   io.to(roomChannel(code)).emit("question:show", payload);
   io.to(roomChannel(code)).emit("question:progress", { answeredCount: 0, participantCount: countParticipants(room.id) });
 
@@ -248,7 +259,8 @@ function closeCurrentQuestion(io, code) {
 
   const questions = getQuestions(room.quizId);
   const question = questions[room.currentQuestionIndex];
-  if (!question) return;
+  if (!question || closedQuestions.has(code)) return; // уже закрыт — не рассылаем повторно
+  closedQuestions.add(code);
 
   const options = db
     .prepare("SELECT id, text, isCorrect FROM AnswerOption WHERE questionId = ?")
@@ -274,7 +286,7 @@ function advanceQuestion(io, code) {
   }
 
   db.prepare(
-    "UPDATE Room SET currentQuestionIndex = ?, currentQuestionStartAt = datetime('now') WHERE id = ?"
+    "UPDATE Room SET currentQuestionIndex = ?, currentQuestionStartAt = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?"
   ).run(nextIndex, room.id);
   broadcastQuestion(io, code);
 }
@@ -283,6 +295,7 @@ function finishRoom(io, code) {
   clearTimer(code);
   const room = getRoom(code);
   if (!room || room.status === "FINISHED") return;
+  closedQuestions.delete(code);
   db.prepare("UPDATE Room SET status = 'FINISHED', finishedAt = datetime('now') WHERE id = ?").run(room.id);
   io.to(roomChannel(code)).emit("quiz:ended", { leaderboard: getLeaderboard(room.id) });
 }

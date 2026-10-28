@@ -2,6 +2,9 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const db = require("./db");
 
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production") {
+  throw new Error("JWT_SECRET не задан: в продакшне нельзя использовать dev-секрет");
+}
 const JWT_SECRET = process.env.JWT_SECRET || "dev_super_secret_change_me";
 const TOKEN_TTL = "7d";
 

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>История — QuizRoom</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+<body x-data="historyPage()" x-init="init()" x-cloak>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">Q</span> QuizRoom</div>
+  <div class="nav-actions">
+    <a href="/organizer.html" class="btn btn-ghost btn-sm">← Мои квизы</a>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <span class="eyebrow">Личный кабинет</span>
+    <h1>История квизов</h1>
+
+    <div class="pill-tabs">
+      <button class="pill-tab" :class="tab==='hosted' && 'active'" @click="tab='hosted'">Я проводил(а)</button>
+      <button class="pill-tab" :class="tab==='participated' && 'active'" @click="tab='participated'">Я участвовал(а)</button>
+    </div>
+
+    <template x-if="tab === 'hosted'">
+      <div>
+        <template x-if="hosted.length === 0">
+          <div class="empty-state card"><h3>Пока нет запущенных квизов</h3></div>
+        </template>
+        <div class="stack">
+          <template x-for="r in hosted" :key="r.code">
+            <div class="card-flat row-between">
+              <div>
+                <h3 style="margin-bottom:4px;" x-text="r.quizTitle"></h3>
+                <p class="muted" style="margin:0;" x-text="'Код ' + r.code + ' · ' + fmtDate(r.createdAt)"></p>
+              </div>
+              <span class="badge" :class="r.status === 'FINISHED' ? 'badge-done' : 'badge-live'" x-text="statusLabel(r.status)"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="tab === 'participated'">
+      <div>
+        <template x-if="participated.length === 0">
+          <div class="empty-state card"><h3>Вы ещё не участвовали ни в одном квизе</h3></div>
+        </template>
+        <div class="stack">
+          <template x-for="r in participated" :key="r.code + r.nickname">
+            <div class="card-flat row-between">
+              <div>
+                <h3 style="margin-bottom:4px;" x-text="r.quizTitle"></h3>
+                <p class="muted" style="margin:0;" x-text="'Ник: ' + r.nickname + ' · ' + fmtDate(r.finishedAt)"></p>
+              </div>
+              <span class="room-code-sm" x-text="r.score + ' очк.'"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <p class="error-box" x-show="error" x-text="error" style="margin-top:20px;"></p>
+  </div>
+</main>
+
+<footer>QuizRoom — учебный прототип квиз-платформы с проведением в реальном времени</footer>
+
+<script src="/js/api.js"></script>
+<script>
+function historyPage() {
+  return {
+    tab: "hosted",
+    hosted: [],
+    participated: [],
+    error: "",
+
+    init() {
+      if (!requireAuthOrRedirect()) return;
+      this.load();
+    },
+
+    async load() {
+      try {
+        const data = await Api.get("/rooms/history/mine");
+        this.hosted = data.hosted;
+        this.participated = data.participated;
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+
+    statusLabel(s) {
+      return { LOBBY: "Лобби", RUNNING: "Идёт", FINISHED: "Завершён" }[s] || s;
+    },
+
+    fmtDate,
+  };
+}
+</script>
+</body>
+</html>
